@@ -1,36 +1,48 @@
 <!DOCTYPE html>
 <html lang="ru">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Сергей Давидовский | Карточка</title>
-  <style>body{font-family:system-ui;padding:2rem;text-align:center;background:#0f172a;color:#e2e8f0}.spin{opacity:.7}</style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Сергей Давидовский | Карточка</title>
+<style>body{font-family:system-ui;padding:2rem;text-align:center;background:#0f172a;color:#e2e8f0}</style>
 </head>
 <body>
-  <p class="spin">Загрузка карточки Сергея…</p>
-  <script src="part0.js"></script>
-  <script src="part1.js"></script>
-  <script src="part2.js"></script>
-  <script src="part3.js"></script>
-  <script src="part4.js"></script>
-  <script src="part5.js"></script>
-  <script src="part6.js"></script>
-  <script>
-  (async function() {
-    try {
-      const parts = window.__SD_PARTS || [];
-      const b64 = parts.join('');
-      const bin = atob(b64);
-      const bytes = new Uint8Array(bin.length);
-      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-      const html = new TextDecoder('utf-8').decode(bytes);
-      document.open();
-      document.write(html);
-      document.close();
-    } catch (e) {
-      document.body.innerHTML = '<p style="color:#f87171">Ошибка: ' + e.message + '</p>';
-    }
-  })();
-  </script>
+<p>Загрузка карточки…</p>
+<script src="p0.js"></script>
+<script src="p1.js"></script>
+<script src="p2.js"></script>
+<script src="p3.js"></script>
+<script src="p4.js"></script>
+<script src="p5.js"></script>
+<script src="p6.js"></script>
+<script src="p7.js"></script>
+<script src="p8.js"></script>
+<script src="p9.js"></script>
+<script src="p10.js"></script>
+<script src="p11.js"></script>
+<script src="p12.js"></script>
+<script src="p13.js"></script>
+<script src="p14.js"></script>
+<script src="p15.js"></script>
+<script src="p16.js"></script>
+<script src="p17.js"></script>
+<script src="p18.js"></script>
+<script src="p19.js"></script>
+<script src="p20.js"></script>
+<script src="p21.js"></script>
+<script src="p22.js"></script>
+<script>
+try {
+  const b64 = (window.__SD_PARTS||[]).join('');
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i=0;i<bin.length;i++) bytes[i]=bin.charCodeAt(i);
+  document.open();
+  document.write(new TextDecoder('utf-8').decode(bytes));
+  document.close();
+} catch(e) {
+  document.body.innerHTML = '<p style="color:#f87171">Ошибка: '+e.message+'</p>';
+}
+</script>
 </body>
 </html>
