@@ -1,1 +1,36 @@
-PLACEHOLDER
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Сергей Давидовский | Карточка</title>
+  <style>body{font-family:system-ui;padding:2rem;text-align:center;background:#0f172a;color:#e2e8f0}.spin{opacity:.7}</style>
+</head>
+<body>
+  <p class="spin">Загрузка карточки Сергея…</p>
+  <script src="part0.js"></script>
+  <script src="part1.js"></script>
+  <script src="part2.js"></script>
+  <script src="part3.js"></script>
+  <script src="part4.js"></script>
+  <script src="part5.js"></script>
+  <script src="part6.js"></script>
+  <script>
+  (async function() {
+    try {
+      const parts = window.__SD_PARTS || [];
+      const b64 = parts.join('');
+      const bin = atob(b64);
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      const html = new TextDecoder('utf-8').decode(bytes);
+      document.open();
+      document.write(html);
+      document.close();
+    } catch (e) {
+      document.body.innerHTML = '<p style="color:#f87171">Ошибка: ' + e.message + '</p>';
+    }
+  })();
+  </script>
+</body>
+</html>
