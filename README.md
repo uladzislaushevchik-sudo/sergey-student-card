@@ -1,16 +1,25 @@
-# Sergey Student Card
+# Карточка ученика — Сергей Давидовский
 
-## Открыть на телефоне
+## Для ChatGPT (Todoist → время занятий)
 
-Скачанный HTML на iPhone/Android часто открывается **без JavaScript** (кнопки не работают).
+Редактируй **только** файл `schedule.json`:
 
-### Самый простой способ — Netlify Drop
-1. На компьютере открой: https://app.netlify.com/drop
-2. Перетащи файл `Sergey_Davidovsky_Student_Card.html`
-3. Получишь ссылку вида `https://random-name.netlify.app`
-4. Открой эту ссылку на телефоне в Safari/Chrome
+```json
+{
+  "student": "Сергей Давидовский",
+  "timezone": "Europe/Minsk",
+  "lessons": [
+    { "date": "2026-10-13", "time": "18:00", "note": "" },
+    { "date": "2026-10-15", "time": "19:30", "note": "" }
+  ],
+  "updated": "2026-10-11"
+}
+```
 
-### Или GitHub Pages
-1. Залей `index.html` (полная карточка) в этот репозиторий через веб-интерфейс GitHub
-2. Settings → Pages → Deploy from branch `main`
-3. Ссылка: `https://uladzislaushevchik-sudo.github.io/sergey-student-card/`
+- `date` — YYYY-MM-DD
+- `time` — HH:MM (24ч)
+- `note` — опционально
+
+Карточка сама подтянет `schedule.json` и покажет дату + время в блоке «Следующие занятия».
+
+Сайт: https://uladzislaushevchik-sudo.github.io/sergey-student-card/
