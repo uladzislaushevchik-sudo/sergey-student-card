@@ -997,4 +997,1275 @@
     const startLevel = pick('уровень на старте');
     const nextDate = pick('следующее занятие', 'следующее', 'next lesson', 'next date');
     
-    const unpaid = pick('неоплаченных', 'неоплачено', 'долг', 'unpaid');
+    const unpaid = pick('неоплаченных', 'неоплачено', 'долг', 'unpaid');    const prepaid = pick('оплачено вперёд', 'предоплата', 'prepaid');
+    
+    const price = pick('цена', 'стоимость', 'price');
+    const freq = pick('частота', 'в неделю', 'frequency');
+
+    const set = (id, val) => {
+      if (val === null || val === undefined) return;
+      const el = document.getElementById(id);
+      if (el) el.value = val;
+    };
+
+    if (lessons !== null) {
+      const n = parseInt(String(lessons).replace(/[^\d]/g, ''), 10);
+      if (!isNaN(n)) set('pf_lessons', n);
+    }
+    if (level) set('pf_level', level);
+    if (price) set('pf_price', price);
+    if (freq) set('pf_freq', freq);
+    if (nextDate) {
+      // accept DD.MM.YYYY or YYYY-MM-DD
+      let d = nextDate.trim();
+      const m = d.match(/^(\d{1,2})\.(\d{1,2})\.(\d{2,4})$/);
+      if (m) {
+        const y = m[3].length === 2 ? '20' + m[3] : m[3];
+        d = `${y}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}`;
+      }
+      set('pf_next_date', d);
+    }
+    
+    if (unpaid !== null) {
+      const n = parseInt(String(unpaid).replace(/[^\d-]/g, ''), 10);
+      if (!isNaN(n)) set('pf_unpaid', n);
+    }
+    if (prepaid !== null) {
+      const n = parseInt(String(prepaid).replace(/[^\d-]/g, ''), 10);
+      if (!isNaN(n)) set('pf_prepaid', n);
+    }
+    
+
+    saveProfile();
+    return { lessons, level, map };
+  }
+
+  /** Sync homework statuses from Homework sheet if possible */
+  async function syncHomeworkFromSheet() {
+    try {
+      const rows = await fetchSheetRows('Homework');
+      if (!rows.length) return 0;
+      // Expected columns include TASK, PROGRESS / similar
+      const header = rows[0].map(x => (x || '').toLowerCase());
+      let taskIdx = header.findIndex(h => h.includes('task') || h.includes('задач'));
+      let progIdx = header.findIndex(h => h.includes('progress') || h.includes('статус') || h.includes('progress'));
+      // Fallback from known structure: col1 TASK, col4 PROGRESS
+      if (taskIdx < 0) taskIdx = 1;
+      if (progIdx < 0) progIdx = 4;
+      let updated = 0;
+      const items = [];
+      for (let i = 1; i < rows.length; i++) {
+        const task = (rows[i][taskIdx] || '').trim();
+        if (!task) continue;
+        const prog = (rows[i][progIdx] || '').trim().toLowerCase();
+        let status = 'pending';
+        if (prog.includes('готов') || prog.includes('done') || prog === '+') status = 'done';
+        else if (prog.includes('процесс') || prog.includes('progress')) status = 'in_progress';
+        items.push({
+          id: 3000 + i,
+          task,
+          status,
+          deadline: (rows[i][2] || '').trim(),
+          source: (rows[i][3] || '').trim()
+        });
+        updated++;
+      }
+      if (items.length) {
+        homework = items;
+        try { localStorage.setItem(KEYS.homework, JSON.stringify(homework)); } catch(e) {}
+        if (typeof renderHomework === 'function') renderHomework();
+      }
+      return updated;
+    } catch (e) {
+      console.warn('homework sync', e);
+      return 0;
+    }
+  }
+
+  async function syncFromGoogle() {
+    const btn = document.getElementById('btnSync');
+    if (btn) btn.classList.add('loading');
+    setSyncStatus('Загрузка…');
+    try {
+      let lessons = '—', level = '—';
+      // Info-лист только если есть отдельная Google-карточка ученика
+      if (GOOGLE_SHEET_ID) {
+        try {
+          const infoRows = await fetchSheetRows('Info');
+          const applied = applyInfoSheet(infoRows);
+          lessons = applied.lessons || lessons;
+          level = applied.level || level;
+        } catch (e) { console.warn('Info sync', e); }
+      }
+
+      let payInfo = '';
+      try {
+        const pay = await syncPaymentFromSheet();
+        if (pay.total) lessons = pay.total;
+        if (pay.unpaid > 0) payInfo = ` · не оплачено: ${pay.unpaid}`;
+        else if (pay.prepaid > 0) payInfo = ` · вперёд: ${pay.prepaid}`;
+        else payInfo = ' · оплата OK';
+      } catch (e) {
+        console.warn('Payment sync', e);
+        try {
+          const pay = applyLocalPaymentSnapshot();
+          if (pay.total) lessons = pay.total;
+          if (pay.unpaid > 0) payInfo = ` · не оплачено: ${pay.unpaid}`;
+          else if (pay.prepaid > 0 || pay.orphanLessons) payInfo = ` · вперёд/переплата (локально)`;
+          else payInfo = ' · оплата OK (локально)';
+        } catch (e2) {
+          payInfo = ' · оплата: нет данных';
+          const badge = document.getElementById('payBadge');
+          if (badge) {
+            badge.className = 'pay-badge warn';
+            badge.textContent = 'Нет данных оплаты';
+          }
+        }
+      }
+
+      try { await syncHomeworkFromSheet(); } catch(e) {}
+
+      const now = new Date();
+      const ts = now.toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+      setSyncStatus(`Обновлено ${ts} · занятий: ${lessons} · уровень: ${level}${payInfo}`, true);
+      if (typeof updateQuickStats === 'function') updateQuickStats();
+    } catch (e) {
+      console.error(e);
+      setSyncStatus('Ошибка синхронизации: ' + e.message, false);
+    } finally {
+      if (btn) btn.classList.remove('loading');
+    }
+  }
+
+  // Auto-sync on load (after profile bound)
+  async function autoSyncOnLoad() {
+    // Сразу показываем локальный снимок BL/BM, затем пробуем Google
+    try { applyLocalPaymentSnapshot(); } catch (e) { console.warn('local pay', e); }
+    try {
+      await syncFromGoogle();
+    } catch (e) {
+      console.warn('auto sync failed', e);
+    }
+  }
+
+
+
+  const DEFAULT_SCHEDULE = {"student": "Сергей Давидовский", "timezone": "Europe/Minsk", "lessons": [{"date": "2026-10-13", "time": "18:00", "note": ""}, {"date": "2026-10-15", "time": "18:00", "note": ""}], "updated": "2026-10-11"};
+  const LOCAL_PAYMENT_SNAPSHOT = {"student": "Сергей Д", "count": 69, "headerCount": 69, "orphanPay": 120.0, "lessons": [{"d": "2026-01-25", "p": 40.0}, {"d": "2026-01-27", "p": 40.0}, {"d": "2026-02-01", "p": 40.0}, {"d": "2026-02-03", "p": 40.0}, {"d": "2026-02-08", "p": 40.0}, {"d": "2026-02-10", "p": 40.0}, {"d": "2026-02-15", "p": 40.0}, {"d": "2026-02-17", "p": 40.0}, {"d": "2026-02-22", "p": 40.0}, {"d": "2026-02-24", "p": 40.0}, {"d": "2026-03-01", "p": 40.0}, {"d": "2026-03-03", "p": 40.0}, {"d": "2026-03-07", "p": 40.0}, {"d": "2026-03-10", "p": 40.0}, {"d": "2026-03-14", "p": 40.0}, {"d": "2026-03-17", "p": 40.0}, {"d": "2026-03-22", "p": 40.0}, {"d": "2026-03-24", "p": 40.0}, {"d": "2026-03-29", "p": 40.0}, {"d": "2026-04-07", "p": 40.0}, {"d": "2026-04-10", "p": 40.0}, {"d": "2026-04-14", "p": 40.0}, {"d": "2026-04-19", "p": 40.0}, {"d": "2026-04-23", "p": 40.0}, {"d": "2026-04-26", "p": 40.0}, {"d": "2026-04-28", "p": 40.0}, {"d": "2026-05-03", "p": 40.0}, {"d": "2026-05-05", "p": 40.0}, {"d": "2026-05-10", "p": 40.0}, {"d": "2026-05-12", "p": 40.0}, {"d": "2026-05-17", "p": 40.0}, {"d": "2026-05-19", "p": 40.0}, {"d": "2026-05-24", "p": 40.0}, {"d": "2026-05-26", "p": 40.0}, {"d": "2026-05-31", "p": 40.0}, {"d": "2026-06-02", "p": 40.0}, {"d": "2026-06-09", "p": 40.0}, {"d": "2026-06-14", "p": 40.0}, {"d": "2026-06-16", "p": 40.0}, {"d": "2026-06-21", "p": 40.0}, {"d": "2026-06-24", "p": 40.0}, {"d": "2026-06-28", "p": 40.0}, {"d": "2026-06-30", "p": 40.0}, {"d": "1936-07-05", "p": 40.0}, {"d": "2026-07-07", "p": 40.0}, {"d": "2026-07-12", "p": 40.0}, {"d": "2026-07-14", "p": 40.0}, {"d": "2026-07-21", "p": 40.0}, {"d": "2026-07-26", "p": 40.0}, {"d": "2026-07-28", "p": 40.0}, {"d": "2026-08-02", "p": 40.0}, {"d": "2026-08-04", "p": 40.0}, {"d": "2026-08-09", "p": 40.0}, {"d": "2026-08-11", "p": 40.0}, {"d": "2026-08-16", "p": 40.0}, {"d": "2026-08-18", "p": 40.0}, {"d": "2026-08-25", "p": 40.0}, {"d": "2026-08-28", "p": 40.0}, {"d": "2026-09-06", "p": 40.0}, {"d": "2026-09-08", "p": 40.0}, {"d": "2026-09-13", "p": 40.0}, {"d": "2026-09-15", "p": 40.0}, {"d": "2026-09-20", "p": 40.0}, {"d": "2026-09-22", "p": 40.0}, {"d": "2026-09-27", "p": 40.0}, {"d": "2026-09-29", "p": 40.0}, {"d": "2026-10-06", "p": 40.0}, {"d": "2026-10-11", "p": 40.0}, {"d": "2026-10-13", "p": 40.0}], "updated": "2026-10-10"};
+
+  const PAYMENT_SHEET_ID = '1PUcxw8Gq2GhtZXD3JNKiUa7FDW2uys6XILEgQuMDj3A';
+  const PAYMENT_SHEET_NAME = 'Оплата 2024-26';
+  const PAYMENT_STUDENT = 'Сергей Д'; // колонка дат в «Оплата 2024-26»; рядом колонка суммы оплаты; счётчик = COUNTA дат (как Info!E2 → BM1)
+
+  function fetchSheetRowsFrom(spreadsheetId, sheetName, timeoutMs = 15000) {
+    return new Promise((resolve, reject) => {
+      const cbName = '_gviz_cb_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
+      const script = document.createElement('script');
+      const timer = setTimeout(() => { cleanup(); reject(new Error('Таймаут «' + sheetName + '»')); }, timeoutMs);
+      function cleanup() {
+        clearTimeout(timer);
+        try { delete window[cbName]; } catch(e) { window[cbName] = undefined; }
+        if (script.parentNode) script.parentNode.removeChild(script);
+      }
+      window[cbName] = function(response) {
+        cleanup();
+        try {
+          if (!response || response.status === 'error') {
+            reject(new Error((response.errors && response.errors[0] && response.errors[0].message) || 'Ошибка Sheets'));
+            return;
+          }
+          const table = response.table;
+          if (!table) { resolve([]); return; }
+          const cols = (table.cols || []).map(c => (c.label || c.id || '').trim());
+          const rows = (table.rows || []).map(r => {
+            const cells = r.c || [];
+            const out = [];
+            for (let i = 0; i < Math.max(cols.length, cells.length); i++) {
+              const cell = cells[i];
+              if (!cell) { out.push(''); continue; }
+              out.push(cell.f != null ? String(cell.f) : (cell.v != null ? String(cell.v) : ''));
+            }
+            return out;
+          });
+          const hasLabels = cols.some(c => c);
+          resolve(hasLabels ? [cols, ...rows] : rows);
+        } catch (e) { reject(e); }
+      };
+      script.onerror = function() {
+        cleanup();
+        reject(new Error('Нет доступа к «' + sheetName + '». Нужен доступ по ссылке.'));
+      };
+      script.src = 'https://docs.google.com/spreadsheets/d/' + spreadsheetId +
+        '/gviz/tq?tqx=responseHandler:' + cbName +
+        '&sheet=' + encodeURIComponent(sheetName) +
+        '&headers=0';
+      document.head.appendChild(script);
+    });
+  }
+
+  function parseSheetDate(val) {
+    if (val == null || val === '') return null;
+    if (typeof val === 'number') {
+      // Google serial date
+      const epoch = new Date(Date.UTC(1899, 11, 30));
+      const d = new Date(epoch.getTime() + val * 86400000);
+      return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+    }
+    const s = String(val).trim();
+    // YYYY-MM-DD or Date(2026,0,21) style from gviz
+    let m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (m) return new Date(+m[1], +m[2]-1, +m[3]);
+    m = s.match(/^(\d{1,2})\.(\d{1,2})\.(\d{2,4})$/);
+    if (m) {
+      const y = m[3].length === 2 ? 2000 + +m[3] : +m[3];
+      return new Date(y, +m[2]-1, +m[1]);
+    }
+    m = s.match(/Date\((\d+),(\d+),(\d+)/);
+    if (m) return new Date(+m[1], +m[2], +m[3]);
+    const t = Date.parse(s);
+    if (!isNaN(t)) {
+      const d = new Date(t);
+      return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+    }
+    return null;
+  }
+
+  function isPaidValue(p) {
+    if (p == null) return false;
+    const s = String(p).trim();
+    if (!s || s === '0') return false;
+    if (s.startsWith('=')) return false;
+    if (s === '+' || s === '+') return true;
+    if (/пробн/i.test(s)) return true; // trial counts as settled
+    if (!isNaN(parseFloat(s.replace(',', '.')))) return true;
+    return false;
+  }
+
+  function startOfToday() {
+    const n = new Date();
+    return new Date(n.getFullYear(), n.getMonth(), n.getDate());
+  }
+
+  /** Compute unpaid / prepaid / next lesson from date+pay pairs */
+  function computePaymentStatus(lessons) {
+    const today = startOfToday();
+    let unpaid = 0, prepaid = 0;
+    lessons.forEach(({ date, paid }) => {
+      if (!date) return;
+      if (date.getTime() <= today.getTime()) {
+        if (!paid) unpaid++;
+      } else if (paid) {
+        prepaid++;
+      }
+    });
+    const upcoming = lessons
+      .filter(l => l.date && l.date.getTime() >= today.getTime())
+      .sort((a, b) => a.date - b.date);
+    const nextCandidates = upcoming.map(l => l.date);
+    const next = nextCandidates.length ? nextCandidates[0] : null;
+    return { unpaid, prepaid, next, upcoming, total: lessons.length };
+  }
+
+  function formatRuDate(d) {
+    if (!d) return '—';
+    return d.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' });
+  }
+
+  function formatRuDateTime(dateStr, timeStr) {
+    if (!dateStr) return '—';
+    const d = (dateStr instanceof Date) ? dateStr : new Date(String(dateStr).slice(0, 10) + 'T12:00:00');
+    if (isNaN(d.getTime())) return String(dateStr) + (timeStr ? ', ' + timeStr : '');
+    let t = d.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' });
+    if (timeStr) t += ', ' + timeStr;
+    return t;
+  }
+
+  function getScheduleUpcoming() {
+    // Prefer remote schedule.json (for ChatGPT/GitHub updates), else embedded DEFAULT_SCHEDULE
+    const src = window._remoteSchedule || (typeof DEFAULT_SCHEDULE !== 'undefined' ? DEFAULT_SCHEDULE : null);
+    if (!src || !src.lessons) return [];
+    const today = startOfToday();
+    return src.lessons
+      .map(l => {
+        const d = parseSheetDate(l.date) || (l.date ? new Date(String(l.date).slice(0,10) + 'T12:00:00') : null);
+        return { date: d, time: l.time || '', note: l.note || '', raw: l };
+      })
+      .filter(l => l.date && l.date.getTime() >= today.getTime())
+      .sort((a, b) => a.date - b.date);
+  }
+
+  function renderPaymentStatus({ unpaid, prepaid, next, total, orphanPay, orphanLessons, upcoming }) {
+    const nextEl = document.getElementById('pf_next_display');
+    if (nextEl) {
+      // Schedule with times wins over payment-only dates
+      const scheduled = getScheduleUpcoming();
+      if (scheduled.length) {
+        nextEl.innerHTML = scheduled.map((l, i) => {
+          const note = l.note ? ` <span style="opacity:.7">(${esc(l.note)})</span>` : '';
+          return `<div style="margin:${i ? '4px' : '0'} 0">${formatRuDateTime(l.date, l.time)}${note}</div>`;
+        }).join('');
+      } else {
+        const list = (upcoming && upcoming.length) ? upcoming : (next ? [{ date: next, paid: true }] : []);
+        if (list.length) {
+          nextEl.innerHTML = list.map((l, i) => {
+            const d = l.date || l;
+            const paidMark = (l.paid === false) ? ' · не оплачено' : '';
+            return `<div style="margin:${i ? '4px' : '0'} 0">${formatRuDate(d)}${paidMark}</div>`;
+          }).join('');
+        } else {
+          nextEl.textContent = 'Не запланировано';
+        }
+      }
+    }
+    const badge = document.getElementById('payBadge');
+    if (!badge) return;
+    if (unpaid > 0) {
+      badge.className = 'pay-badge danger';
+      const word = unpaid === 1 ? 'занятие' : (unpaid < 5 ? 'занятия' : 'занятий');
+      badge.textContent = `Не оплачено: ${unpaid} ${word}`;
+    } else if (prepaid > 0 || (orphanLessons && orphanLessons > 0)) {
+      badge.className = 'pay-badge ok';
+      const parts = [];
+      if (prepaid > 0) {
+        const word = prepaid === 1 ? 'занятие' : (prepaid < 5 ? 'занятия' : 'занятий');
+        parts.push(`вперёд: ${prepaid} ${word}`);
+      }
+      if (orphanLessons && orphanLessons > 0) {
+        parts.push(`переплата: ~${orphanLessons} зан.`);
+      }
+      badge.textContent = 'Оплачено ' + parts.join(' · ');
+    } else {
+      badge.className = 'pay-badge ok';
+      badge.textContent = 'Оплата в порядке';
+    }
+  }
+
+  /**
+   * Оплата 2024-26: ищем заголовок «Сергей Д».
+   * Пара колонок: [Дата занятия | Сумма оплаты].
+   * Row1: имя | COUNTA(дат) — то же число, что Info!E2 через IMPORTRANGE BM1.
+   * Row2: «Дата» | «Оплата»; далее даты (прошлые и будущие) и суммы.
+   */
+  function applyLocalPaymentSnapshot() {
+    const snap = LOCAL_PAYMENT_SNAPSHOT;
+    if (!snap || !snap.lessons || !snap.lessons.length) {
+      throw new Error('Нет локальных данных оплаты');
+    }
+    const lessons = snap.lessons.map(l => ({
+      date: parseSheetDate(l.d),
+      paid: l.p != null && Number(l.p) > 0,
+      rawP: l.p
+    })).filter(l => l.date);
+    const status = computePaymentStatus(lessons);
+    status.orphanPay = snap.orphanPay || 0;
+    status.price = 40;
+    status.orphanLessons = status.orphanPay > 0 ? Math.round(status.orphanPay / 40) : 0;
+    renderPaymentStatus(status);
+    const lessonsCount = Math.max(status.total, snap.headerCount || 0, snap.count || 0);
+    const lessonsInput = document.getElementById('pf_lessons');
+    if (lessonsInput && lessonsCount) {
+      lessonsInput.value = lessonsCount;
+      if (typeof saveProfile === 'function') saveProfile();
+    }
+    const levelEl = document.getElementById('pf_level');
+    return { ...status, total: lessonsCount, mode: 'local', lessonsFound: lessons.length };
+  }
+
+  async function syncPaymentFromSheet() {
+    // 1) Google PayLog / payment sheet  2) fallback: LOCAL_PAYMENT_SNAPSHOT (BL/BM)
+    let rows = null;
+    let mode = '';
+    try {
+      if (GOOGLE_SHEET_ID) {
+        rows = await fetchSheetRows('PayLog');
+        mode = 'PayLog';
+      } else {
+        throw new Error('no student sheet');
+      }
+    } catch (e1) {
+      try {
+        rows = await fetchSheetRowsFrom(PAYMENT_SHEET_ID, PAYMENT_SHEET_NAME);
+        mode = 'payment';
+      } catch (e2) {
+        console.warn('Google payment unavailable, using local snapshot', e2);
+        return applyLocalPaymentSnapshot();
+      }
+    }
+
+    if (!rows || !rows.length) throw new Error('Пустые данные оплаты');
+
+    // Find date/pay column pair
+    let dateCol = 0, payCol = 1;
+    let dataStart = 0;
+    const headerRow = rows[0].map(c => (c || '').toString());
+    let found = -1;
+    // Prefer header that contains full marker (e.g. «Сергей Д»), not just «Сергей»
+    for (let i = 0; i < headerRow.length; i++) {
+      const h = headerRow[i];
+      if (h.includes(PAYMENT_STUDENT)) { found = i; break; }
+    }
+    // Fallback: exact start match «Сергей Д»
+    if (found >= 0) {
+      dateCol = found;
+      payCol = found + 1;
+      dataStart = 1;
+      if (rows[1] && /дата/i.test(String(rows[1][dateCol] || ''))) dataStart = 2;
+    } else {
+      // PayLog: two columns of dates + payments (possibly with a junk first row "67")
+      dateCol = 0; payCol = Math.min(1, (rows[0] || []).length - 1);
+      if (payCol < 0) payCol = 1;
+      if (/дата/i.test(String(rows[0][0] || ''))) dataStart = 1;
+      else if (String(rows[0][0] || '').includes(PAYMENT_STUDENT)) {
+        dataStart = 1;
+        if (rows[1] && /дата/i.test(String(rows[1][0] || ''))) dataStart = 2;
+      }
+    }
+
+    const lessons = [];
+    let orphanPay = 0; // суммы оплаты без даты = предоплата / переплата
+    for (let r = dataStart; r < rows.length; r++) {
+      const row = rows[r] || [];
+      const rawD = row[dateCol];
+      const rawP = row[payCol];
+      const date = parseSheetDate(rawD);
+      if (date) {
+        lessons.push({ date, paid: isPaidValue(rawP), rawP });
+      } else if (isPaidValue(rawP)) {
+        const n = parseFloat(String(rawP).replace(',', '.'));
+        if (!isNaN(n) && n > 0) orphanPay += n;
+      }
+    }
+
+    if (!lessons.length) throw new Error('Не найдено дат занятий для Сергея Д (режим: ' + mode + ')');
+
+    const status = computePaymentStatus(lessons);
+    // orphan payments (BM without BL date) = переплата / баланс
+    status.orphanPay = orphanPay;
+    status.price = 40;
+    status.orphanLessons = orphanPay > 0 ? Math.round(orphanPay / 40) : 0;
+    renderPaymentStatus(status);
+
+    // Кол-во занятий = число дат (как формула COUNTA / Info!E2).
+    // Если в R1 колонки оплаты уже стоит число (BM1), используем max для надёжности.
+    let headerCount = 0;
+    if (found >= 0) {
+      const hc = parseInt(String(rows[0][payCol] || '').replace(/[^\d]/g, ''), 10);
+      if (!isNaN(hc) && hc > 0) headerCount = hc;
+    }
+    const lessonsCount = Math.max(status.total, headerCount);
+
+    const lessonsInput = document.getElementById('pf_lessons');
+    if (lessonsInput && lessonsCount) {
+      lessonsInput.value = lessonsCount;
+      if (typeof saveProfile === 'function') saveProfile();
+    }
+    return { ...status, total: lessonsCount, mode, lessonsFound: lessons.length };
+  }
+
+
+  function loadProfile() {
+    let p = null;
+    try { p = JSON.parse(localStorage.getItem(KEYS.profile) || 'null'); } catch(e) {}
+    if (!p || typeof p !== 'object') p = { ...DEFAULT_PROFILE };
+    // fill defaults for missing keys
+    p = { ...DEFAULT_PROFILE, ...p };
+    // if lessons still at old hardcoded default path, keep sheet value
+    // кол-во занятий синхронизируется из оплаты (COUNTA дат = Info!E2)
+    const set = (id, val) => { const el = document.getElementById(id); if (el) el.value = val ?? ''; };
+    set('pf_lessons', p.lessons);
+    set('pf_freq', p.freq);
+    set('pf_price', p.price);
+    set('pf_level', p.level);
+    // next/unpaid/prepaid come from payment sheet auto-calc
+    const pill = document.getElementById('pf_level_pill');
+    if (pill) pill.textContent = (p.level || 'B1') + ' сейчас';
+    updatePayBadge();
+    return p;
+  }
+
+  function saveProfile() {
+    const get = id => { const el = document.getElementById(id); return el ? el.value : ''; };
+    const p = {
+      lessons: parseInt(get('pf_lessons'), 10) || 0,
+      freq: get('pf_freq') || '2×',
+      price: get('pf_price') || '40 Br',
+      level: get('pf_level') || 'B1',
+      status: 'active'
+    };
+    localStorage.setItem(KEYS.profile, JSON.stringify(p));
+    const pill = document.getElementById('pf_level_pill');
+    if (pill) pill.textContent = p.level + ' сейчас';
+  }
+
+  function updatePayBadge() {
+    const unpaid = parseInt(document.getElementById('pf_unpaid')?.value || '0', 10) || 0;
+    const prepaid = parseInt(document.getElementById('pf_prepaid')?.value || '0', 10) || 0;
+    const note = document.getElementById('pf_pay_note')?.value || '';
+    const badge = document.getElementById('payBadge');
+    if (!badge) return;
+    if (unpaid > 0) {
+      badge.className = 'pay-badge danger';
+      badge.textContent = `Не оплачено: ${unpaid} ` + (unpaid === 1 ? 'занятие' : unpaid < 5 ? 'занятия' : 'занятий') + (note ? ' · ' + note : '');
+    } else if (prepaid > 0) {
+      badge.className = 'pay-badge ok';
+      badge.textContent = `Оплачено вперёд: ${prepaid}` + (note ? ' · ' + note : '');
+    } else {
+      badge.className = 'pay-badge ok';
+      badge.textContent = note || 'Оплата в порядке';
+    }
+  }
+
+  function bindProfileInputs() {
+    ['pf_lessons','pf_freq','pf_price','pf_level']
+      .forEach(id => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.addEventListener('change', saveProfile);
+        el.addEventListener('blur', saveProfile);
+      });
+  }
+
+
+  function load() {
+    try { vocab = JSON.parse(localStorage.getItem(KEYS.vocab) || 'null'); } catch { vocab = null; }
+    if (!Array.isArray(vocab) || !vocab.length) {
+      vocab = JSON.parse(JSON.stringify(DEFAULT_VOCAB));
+      save(KEYS.vocab, vocab);
+    }
+
+    // ensure themes on loaded vocab
+    const themeMap = {
+      'essential':'Business Qualities','substantial':'Business Qualities','efficient':'Business Qualities','flexible':'Business Qualities','committed':'Business Qualities','particular':'Business Qualities','enormous':'Business Qualities','excessive':'Business Qualities','impressive':'Business Qualities','advantage':'Business Qualities','requirement':'Business Qualities','commitment':'Business Qualities','challenge':'Business Qualities','demand':'Business Qualities','occupation':'Business Qualities',
+      'ensure':'Business & Logistics Verbs','allocate':'Business & Logistics Verbs','provide':'Business & Logistics Verbs','oversee':'Business & Logistics Verbs','arrange':'Business & Logistics Verbs','gain':'Business & Logistics Verbs','earn':'Business & Logistics Verbs','contribute':'Business & Logistics Verbs','retain':'Business & Logistics Verbs','reduce':'Business & Logistics Verbs','exceed':'Business & Logistics Verbs','persuade':'Business & Logistics Verbs','refuse':'Business & Logistics Verbs','consider':'Business & Logistics Verbs','seek':'Business & Logistics Verbs','set':'Business & Logistics Verbs',
+      'despite':'Adverbs & Linking','in order to':'Adverbs & Linking','strictly':'Adverbs & Linking','surprisingly':'Adverbs & Linking','accurately':'Adverbs & Linking','frankly':'Adverbs & Linking','completely':'Adverbs & Linking','instead':'Adverbs & Linking','accordingly':'Adverbs & Linking','in general':'Adverbs & Linking','vice versa':'Adverbs & Linking','plenty':'Adverbs & Linking',
+      'issue':'Problem-solving & Communication','claim':'Problem-solving & Communication','appreciate':'Problem-solving & Communication','affect':'Problem-solving & Communication','mention':'Problem-solving & Communication','attend (to)':'Problem-solving & Communication','inspire':'Problem-solving & Communication','participate':'Problem-solving & Communication','conduct':'Problem-solving & Communication','response':'Problem-solving & Communication','suggestion':'Problem-solving & Communication'
+    };
+    vocab.forEach(v => { if (!v.theme) v.theme = themeMap[v.word] || themeMap[(v.word||'').toLowerCase()] || 'Other'; });
+
+    try {
+      const savedIrr = JSON.parse(localStorage.getItem(KEYS.irregular) || 'null');
+      // Seed from DEFAULT, keep any extra verbs the student added
+      const byInf = {};
+      DEFAULT_IRREGULAR.forEach(v => { byInf[(v.inf || '').toLowerCase()] = { ...v }; });
+      if (Array.isArray(savedIrr)) {
+        savedIrr.forEach(v => {
+          const key = (v.inf || '').toLowerCase();
+          if (!key) return;
+          if (byInf[key]) {
+            // prefer non-empty fields from saved if student edited
+            byInf[key] = {
+              ...byInf[key],
+              past: v.past || byInf[key].past,
+              pp: v.pp || byInf[key].pp,
+              trans: v.trans || byInf[key].trans
+            };
+          } else {
+            byInf[key] = { id: v.id || Date.now(), inf: v.inf, past: v.past || '', pp: v.pp || '', trans: v.trans || '' };
+          }
+        });
+      }
+      irregular = Object.values(byInf);
+      save(KEYS.irregular, irregular);
+    } catch (e) {
+      console.error('irregular load', e);
+      irregular = JSON.parse(JSON.stringify(DEFAULT_IRREGULAR));
+    }
+    try { homework = JSON.parse(localStorage.getItem(KEYS.homework) || 'null'); } catch { homework = null; }
+    if (!Array.isArray(homework) || !homework.length) {
+      homework = JSON.parse(JSON.stringify(DEFAULT_HOMEWORK));
+      try { localStorage.setItem(KEYS.homework, JSON.stringify(homework)); } catch(e) {}
+    }
+    try { hwArchive = JSON.parse(localStorage.getItem(KEYS.hwArchive) || '[]'); } catch { hwArchive = []; }
+    if (!Array.isArray(hwArchive)) hwArchive = [];
+    try {
+      // Always base structure from DEFAULT (with presentation links), merge done flags from storage
+      const saved = JSON.parse(localStorage.getItem(KEYS.grammar) || 'null');
+      const progress = {};
+      if (Array.isArray(saved)) {
+        saved.forEach(item => {
+          const done = typeof item.done === 'boolean' ? item.done : item.status === 'done';
+          if (item.id) progress[item.id] = done;
+          if (item.topic) progress['t:' + item.topic] = done;
+        });
+      }
+      grammar = DEFAULT_GRAMMAR.map(item => ({
+        ...item,
+        done: progress[item.id] !== undefined ? progress[item.id]
+            : (progress['t:' + item.topic] !== undefined ? progress['t:' + item.topic] : item.done)
+      }));
+      localStorage.setItem(KEYS.grammar, JSON.stringify(grammar));
+    } catch (e) {
+      console.error('grammar load', e);
+      grammar = JSON.parse(JSON.stringify(DEFAULT_GRAMMAR));
+    }
+    const notes = localStorage.getItem(KEYS.notes);
+    if (notes) document.getElementById('teacherNotes').value = notes;
+    if (localStorage.getItem(KEYS.theme) === 'dark') {
+      document.documentElement.setAttribute('data-theme', 'dark');
+      document.getElementById('themeBtn').classList.add('on');
+    }
+    loadProfile();
+    bindProfileInputs();
+    renderAll();
+  }
+
+  function save(key, data) { localStorage.setItem(key, JSON.stringify(data)); }
+
+  document.querySelectorAll('.tab').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+      btn.classList.add('active');
+      const sec = document.getElementById(btn.dataset.tab);
+      if (sec) sec.classList.add('active');
+      if (btn.dataset.tab === 'grammar') renderGrammar();
+      if (btn.dataset.tab === 'exercises') renderExercises();
+      if (btn.dataset.tab === 'vocab') renderVocab();
+    });
+  });
+
+  function toggleTheme() {
+    const html = document.documentElement;
+    const next = html.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+    if (next === 'dark') html.setAttribute('data-theme', 'dark');
+    else html.removeAttribute('data-theme');
+    localStorage.setItem(KEYS.theme, next);
+    document.getElementById('themeBtn').classList.toggle('on', next === 'dark');
+  }
+
+  function saveNotes() {
+    localStorage.setItem(KEYS.notes, document.getElementById('teacherNotes').value);
+    const msg = document.getElementById('savedMsg');
+    msg.classList.add('show');
+    setTimeout(() => msg.classList.remove('show'), 1600);
+  }
+  function clearNotes() {
+    if (confirm('Очистить заметки?')) {
+      document.getElementById('teacherNotes').value = '';
+      localStorage.removeItem(KEYS.notes);
+    }
+  }
+
+  function addVocab() {
+    const word = document.getElementById('vWord').value.trim();
+    if (!word) { alert('Введите слово'); return; }
+    vocab.unshift({
+      id: Date.now(),
+      word,
+      trans: document.getElementById('vTrans').value.trim(),
+      pos: document.getElementById('vPos').value,
+      def: (function(){ const el = document.getElementById('vDef') || document.getElementById('vEx'); return el ? el.value.trim() : ''; })(),
+      ex: (function(){ const el = document.getElementById('vDef') || document.getElementById('vEx'); return el ? el.value.trim() : ''; })(),
+      theme: document.getElementById('vTheme') ? document.getElementById('vTheme').value : 'Other',
+      added: new Date().toISOString().slice(0, 10)
+    });
+    save(KEYS.vocab, vocab);
+    ['vWord','vTrans','vEx'].forEach(id => document.getElementById(id).value = '');
+    document.getElementById('vPos').value = '';
+    renderVocab(); updateQuickStats();
+  }
+  function deleteVocab(id) {
+    if (!confirm('Удалить слово?')) return;
+    vocab = vocab.filter(v => v.id !== id);
+    save(KEYS.vocab, vocab); renderVocab(); updateQuickStats();
+  }
+  function renderVocab() {
+    const list = document.getElementById('vocabList');
+    const empty = document.getElementById('vocabEmpty');
+    document.getElementById('vocabCount').textContent = vocab.length;
+    if (!vocab.length) {
+      list.innerHTML = '';
+      empty.style.display = 'block';
+      return;
+    }
+    empty.style.display = 'none';
+    if (!window._vocabOpen) window._vocabOpen = {};
+    const mode = window._vocabMode || 'pos';
+
+    // Group key
+    const POS_ORDER = ['noun', 'verb', 'adj', 'adv', 'phrase', 'prep', 'pronoun', 'conj', 'other'];
+    const POS_LABELS = {
+      noun: 'Noun · Существительные',
+      verb: 'Verb · Глаголы',
+      adj: 'Adjective · Прилагательные',
+      adv: 'Adverb · Наречия',
+      phrase: 'Phrase · Фразы / идиомы',
+      prep: 'Preposition · Предлоги',
+      pronoun: 'Pronoun · Местоимения',
+      conj: 'Conjunction · Союзы',
+      other: 'Other'
+    };
+    const THEME_ORDER = [
+      'Idioms & Phrases', 'Body Parts', 'Personality & Feelings', 'Communication',
+      'IT & Tech', 'Work & Study', 'Travel & Transport', 'Food & Drink',
+      'Home & Everyday', 'Time & Adverbs', 'Descriptions', 'General Nouns',
+      'General Verbs', 'Grammar Words', 'Other'
+    ];
+
+    const groups = {};
+    vocab.forEach(v => {
+      let key;
+      if (mode === 'theme') {
+        key = v.theme || 'Other';
+      } else {
+        key = (v.pos || 'other').toLowerCase();
+        if (key === 'adjective') key = 'adj';
+        if (key === 'adverb') key = 'adv';
+        if (key === 'preposition') key = 'prep';
+        if (key === 'conjunction') key = 'conj';
+        if (!POS_LABELS[key]) key = 'other';
+      }
+      if (!groups[key]) groups[key] = [];
+      groups[key].push(v);
+    });
+
+    let keys;
+    if (mode === 'theme') {
+      keys = THEME_ORDER.filter(k => groups[k] && groups[k].length)
+        .concat(Object.keys(groups).filter(k => !THEME_ORDER.includes(k)));
+    } else {
+      keys = POS_ORDER.filter(k => groups[k] && groups[k].length)
+        .concat(Object.keys(groups).filter(k => !POS_ORDER.includes(k)));
+    }
+
+    const openKey = (k) => mode + '::' + k;
+
+    list.innerHTML = keys.map(key => {
+      const items = groups[key];
+      const label = mode === 'pos' ? (POS_LABELS[key] || key) : key;
+      const isOpen = !!window._vocabOpen[openKey(key)];
+      return `<div class="gram-cat ${isOpen ? 'open' : ''}" data-vkey="${escAttr(openKey(key))}">
+        <button type="button" class="gram-cat-head" onclick="toggleVocabCat(this)">
+          <span class="chev">▶</span>
+          <span>${esc(label)}</span>
+          <span class="cat-meta">${items.length}</span>
+        </button>
+        <div class="gram-cat-body">
+          ${items.map(v => {
+            const defText = v.def || v.ex || '';
+            return `
+            <div class="vocab-item">
+              <button type="button" class="btn-speak" title="Озвучить" data-speak="${escAttr(v.word)}" onclick="speakWord(this.getAttribute('data-speak'))">🔊</button>
+              <div style="flex:1">
+                <span class="en">${esc(v.word)}</span>
+                ${mode === 'theme' && v.pos ? `<span class="pos">${esc(v.pos)}</span>` : ''}
+                ${mode === 'pos' && v.theme ? `<span class="pos">${esc(v.theme)}</span>` : ''}
+                ${v.trans ? `<div class="ru">${esc(v.trans)}</div>` : ''}
+                ${defText ? `<button type="button" class="btn-def" onclick="toggleVocabDef(${v.id})">Definition ▾</button>
+                <div class="vocab-def" id="vdef_${v.id}">${esc(defText)}</div>` : ''}
+              </div>
+              <div class="vocab-actions">
+                <button class="btn btn-danger btn-sm" onclick="deleteVocab(${v.id})">✕</button>
+              </div>
+            </div>`;
+          }).join('')}
+        </div>
+      </div>`;
+    }).join('');
+  }
+
+  function toggleVocabCat(btn) {
+    const box = btn.closest('.gram-cat');
+    if (!box) return;
+    const key = box.getAttribute('data-vkey');
+    box.classList.toggle('open');
+    if (!window._vocabOpen) window._vocabOpen = {};
+    window._vocabOpen[key] = box.classList.contains('open');
+  }
+
+  function toggleVocabDef(id) {
+    const el = document.getElementById('vdef_' + id);
+    if (!el) return;
+    el.classList.toggle('open');
+  }
+
+  function speakWord(text) {
+    if (!text || !window.speechSynthesis) return;
+    try { window.speechSynthesis.cancel(); } catch(e) {}
+    const u = new SpeechSynthesisUtterance(String(text));
+    u.lang = 'en-US';
+    u.rate = 0.92;
+    // Prefer English voice on Safari/Chrome
+    const voices = window.speechSynthesis.getVoices() || [];
+    const en = voices.find(v => /en(-|_)US/i.test(v.lang)) || voices.find(v => /^en/i.test(v.lang));
+    if (en) u.voice = en;
+    window.speechSynthesis.speak(u);
+  }
+  // Safari: voices load async
+  if (window.speechSynthesis) {
+    window.speechSynthesis.getVoices();
+    window.speechSynthesis.onvoiceschanged = function() { window.speechSynthesis.getVoices(); };
+  }
+
+
+  window._vocabMode = window._vocabMode || 'pos';
+  document.querySelectorAll('[data-vmode]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('[data-vmode]').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      window._vocabMode = btn.dataset.vmode;
+      renderVocab();
+    });
+  });
+
+
+  function addIrregular() {
+    irregular.push({ id: Date.now(), inf: '', past: '', pp: '', trans: '' });
+    save(KEYS.irregular, irregular); renderIrregular(); updateQuickStats();
+  }
+  function updateIrregular(id, field, value) {
+    const item = irregular.find(x => x.id === id);
+    if (item) { item[field] = value; save(KEYS.irregular, irregular); }
+  }
+  function deleteIrregular(id) {
+    irregular = irregular.filter(x => x.id !== id);
+    save(KEYS.irregular, irregular); renderIrregular(); updateQuickStats();
+  }
+  function stripIpa(s) {
+    if (!s) return '';
+    return String(s)
+      .replace(/\s*\|[^|]+\|/g, '')
+      .replace(/\s*\([^)]*[θðəɪʌæŋʃʒːˈˌɑɔʊ][^)]*\)/g, '')
+      .replace(/\s*\/[^/]+\//g, '')
+      .trim();
+  }
+  function renderIrregular() {
+    const body = document.getElementById('ivBody');
+    const empty = document.getElementById('ivEmpty');
+    document.getElementById('ivCount').textContent = irregular.length;
+    if (!irregular.length) { body.innerHTML = ''; empty.style.display = 'block'; return; }
+    empty.style.display = 'none';
+    body.innerHTML = irregular.map(v => {
+      const inf = stripIpa(v.inf), past = stripIpa(v.past), pp = stripIpa(v.pp), trans = stripIpa(v.trans);
+      return `<tr>
+        <td><input value="${escAttr(inf)}" onchange="updateIrregular(${v.id},'inf',this.value)" placeholder="go"></td>
+        <td><input value="${escAttr(past)}" onchange="updateIrregular(${v.id},'past',this.value)" placeholder="went"></td>
+        <td><input value="${escAttr(pp)}" onchange="updateIrregular(${v.id},'pp',this.value)" placeholder="gone"></td>
+        <td><input value="${escAttr(trans)}" onchange="updateIrregular(${v.id},'trans',this.value)" placeholder="идти"></td>
+        <td><button class="btn btn-danger btn-sm" onclick="deleteIrregular(${v.id})">✕</button></td>
+      </tr>`;
+    }).join('');
+  }
+
+  function addHomework() {
+    const task = document.getElementById('hwTask').value.trim();
+    if (!task) { alert('Введите задание'); return; }
+    homework.unshift({
+      id: Date.now(), task,
+      deadline: document.getElementById('hwDeadline').value || '',
+      source: document.getElementById('hwSource').value.trim(),
+      notes: document.getElementById('hwNotes').value.trim(),
+      status: 'pending',
+      created: new Date().toISOString().slice(0, 10)
+    });
+    save(KEYS.homework, homework);
+    ['hwTask','hwDeadline','hwSource','hwNotes'].forEach(id => document.getElementById(id).value = '');
+    renderHomework(); updateQuickStats();
+  }
+  function cycleHwStatus(id) {
+    const item = homework.find(h => h.id === id);
+    if (!item) return;
+    item.status = item.status === 'pending' ? 'done' : 'pending';
+    save(KEYS.homework, homework); renderHomework(); updateQuickStats();
+  }
+  function markHomeworkDone(id) {
+    const item = homework.find(h => h.id === id);
+    if (!item) return;
+    item.status = 'done';
+    save(KEYS.homework, homework); renderHomework(); updateQuickStats();
+  }
+  function deleteHomework(id) {
+    if (!confirm('Удалить задание?')) return;
+    homework = homework.filter(h => h.id !== id);
+    save(KEYS.homework, homework); renderHomework(); updateQuickStats();
+  }
+  function renderHomework() {
+    const list = document.getElementById('hwList');
+    const empty = document.getElementById('hwEmpty');
+    const isArchive = hwFilter === 'archive';
+    const source = isArchive ? hwArchive : homework;
+    let filtered;
+    if (isArchive) filtered = hwArchive;
+    else if (hwFilter === 'all') filtered = homework;
+    else filtered = homework.filter(h => h.status === hwFilter);
+
+    const activeCount = homework.length;
+    const archCount = hwArchive.length;
+    document.getElementById('hwCount').textContent = isArchive ? archCount : activeCount;
+
+    if (!filtered.length) {
+      list.innerHTML = ''; empty.style.display = 'block';
+      empty.textContent = isArchive
+        ? 'Архив пуст.'
+        : (homework.length ? 'Нет заданий в этом фильтре.' : 'Нет домашних заданий.');
+      return;
+    }
+    empty.style.display = 'none';
+    list.innerHTML = filtered.map(h => {
+      const statusLabel = h.status === 'done' ? 'Выполнено' : 'В процессе';
+      const statusClass = h.status === 'done' ? 'done' : 'pending';
+      const archiveBtn = (!isArchive && h.status === 'done')
+        ? `<button type="button" class="btn-archive" onclick="archiveHomework(${h.id})">📦 В архив</button>`
+        : '';
+      const restoreBtn = isArchive
+        ? `<button type="button" class="btn-restore" onclick="restoreHomework(${h.id})">↩ Вернуть</button>
+           <button type="button" class="btn btn-danger btn-sm" onclick="deleteArchivedHomework(${h.id})">✕</button>`
+        : `<button class="btn btn-danger btn-sm" onclick="deleteHomework(${h.id})">✕</button>`;
+      const statusBtn = isArchive
+        ? `<span class="hw-status ${statusClass}">${statusLabel}</span>`
+        : (h.status === 'done'
+            ? `<button class="hw-status done" onclick="cycleHwStatus(${h.id})">Выполнено</button>`
+            : `<span class="hw-status pending">В процессе</span>
+               <button type="button" class="btn-hw-done" onclick="markHomeworkDone(${h.id})">✓ Выполнено</button>`);
+      return `<div class="hw-item">
+          <div class="hw-task">${esc(h.task)}</div>
+          <div class="hw-meta">
+            ${statusBtn}
+            ${h.deadline ? `<span>📅 ${h.deadline}</span>` : ''}
+            ${h.created ? `<span>создано ${h.created}</span>` : ''}
+            ${h.archivedAt ? `<span>архив ${h.archivedAt}</span>` : ''}
+            ${h.source ? `<a href="${escAttr(h.source)}" target="_blank" style="color:var(--secondary)">ссылка</a>` : ''}
+            ${h.notes ? `<span>· ${esc(h.notes)}</span>` : ''}
+            ${archiveBtn}
+            ${restoreBtn}
+          </div>
+        </div>`;
+    }).join('');
+  }
+
+  function archiveHomework(id) {
+    const item = homework.find(h => h.id === id);
+    if (!item) return;
+    if (item.status !== 'done') { alert('Сначала отметьте как выполненное'); return; }
+    item.archivedAt = new Date().toISOString().slice(0, 10);
+    hwArchive.unshift(item);
+    homework = homework.filter(h => h.id !== id);
+    save(KEYS.homework, homework);
+    save(KEYS.hwArchive, hwArchive);
+    renderHomework(); updateQuickStats();
+  }
+
+  function restoreHomework(id) {
+    const item = hwArchive.find(h => h.id === id);
+    if (!item) return;
+    delete item.archivedAt;
+    homework.unshift(item);
+    hwArchive = hwArchive.filter(h => h.id !== id);
+    save(KEYS.homework, homework);
+    save(KEYS.hwArchive, hwArchive);
+    renderHomework(); updateQuickStats();
+  }
+
+  function deleteArchivedHomework(id) {
+    if (!confirm('Удалить из архива навсегда?')) return;
+    hwArchive = hwArchive.filter(h => h.id !== id);
+    save(KEYS.hwArchive, hwArchive);
+    renderHomework(); updateQuickStats();
+  }
+
+  function updateQuickStats() {
+    const openHw = homework.filter(h => h.status !== 'done').length;
+    document.getElementById('quickStats').textContent =
+      `Словарь: ${vocab.length} · Irregular: ${irregular.length} · Homework: ${openHw} · Архив: ${hwArchive.length}`;
+  }
+
+
+  function renderGrammar() {
+    const list = document.getElementById('grammarList');
+    if (!list) { console.warn('grammarList not found'); return; }
+    if (!Array.isArray(grammar) || !grammar.length) {
+      try { grammar = JSON.parse(JSON.stringify(DEFAULT_GRAMMAR)); } catch (e) { grammar = []; }
+    }
+    if (!Array.isArray(grammar) || !grammar.length) {
+      list.innerHTML = '<li class="empty-state">Нет данных грамматики</li>';
+      return;
+    }
+    if (!window._gramOpen) window._gramOpen = {};
+    const byCat = {};
+    grammar.forEach(g => {
+      if (gramFilter === 'done' && !g.done) return;
+      if (gramFilter === 'gap' && g.done) return;
+      if (gramFilter === 'progress' && g.done) return;
+      const cat = g.cat || 'Другое';
+      if (!byCat[cat]) byCat[cat] = [];
+      byCat[cat].push(g);
+    });
+    const cats = Object.keys(byCat);
+    if (!cats.length) {
+      list.innerHTML = '<li class="empty-state">Нет тем в этом фильтре</li>';
+      return;
+    }
+    list.innerHTML = cats.map(cat => {
+      const items = byCat[cat];      const doneN = items.filter(i => i.done).length;
+      const open = !!window._gramOpen[cat];
+      return `<li class="gram-cat ${open ? 'open' : ''}" data-cat="${escAttr(cat)}">
+        <button type="button" class="gram-cat-head" onclick="toggleGramCat(this)">
+          <span class="chev">▶</span>
+          <span>${esc(cat)}</span>
+          <span class="cat-meta">${doneN}/${items.length}</span>
+        </button>
+        <div class="gram-cat-body">
+          ${items.map(g => {
+            const exList = (g.exercises && g.exercises.length) ? g.exercises : [];
+            const exHtml = exList.length ? `
+              <div class="gram-ex-row">
+                <span class="gram-ex-label" data-i18n="exLabel">Exercises</span>
+                ${exList.map(ex => `<a class="gram-ex-link" href="${escAttr(ex.url)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">${esc(ex.title)}</a>`).join('')}
+              </div>` : '';
+            return `
+            <div class="grammar-block">
+            <label class="grammar-item ${g.done ? 'done' : 'gap'}">
+              <input type="checkbox" ${g.done ? 'checked' : ''} onchange="toggleGrammar('${escAttr(g.id)}', this.checked)" style="width:18px;height:18px;accent-color:var(--success);flex-shrink:0">
+              <span class="topic">${g.pres ? `<a class="ex-link" href="${escAttr(g.pres)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">${esc(g.topic)}</a>` : esc(g.topic)}</span>
+              <span class="badge ${g.done ? 'done' : 'gap'}">${g.done ? t('done') : t('notDone')}</span>
+            </label>
+            ${exHtml}
+            </div>`;
+          }).join('')}
+        </div>
+      </li>`;
+    }).join('');
+  }
+
+  function toggleGramCat(btn) {
+    const li = btn.closest('.gram-cat');
+    if (!li) return;
+    const cat = li.getAttribute('data-cat');
+    li.classList.toggle('open');
+    if (!window._gramOpen) window._gramOpen = {};
+    window._gramOpen[cat] = li.classList.contains('open');
+  }
+
+  function toggleGrammar(id, checked) {
+    const item = grammar.find(g => g.id === id);
+    if (!item) return;
+    item.done = checked;
+    save(KEYS.grammar, grammar);
+    renderGrammar();
+  }
+
+  document.querySelectorAll('#gramFilters .filter-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('#gramFilters .filter-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      gramFilter = btn.dataset.f;
+      renderGrammar();
+    });
+  });
+
+  function exportData() {
+    const data = {
+      student: 'Сергей Давидовский', exported: new Date().toISOString(),
+      vocab, irregular, homework, grammar,
+      notes: localStorage.getItem(KEYS.notes) || ''
+    };
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'sergey_davidovsky_card_export.json';
+    a.click();
+  }
+
+  function esc(s) { const d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
+  function escAttr(s) { return (s || '').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;'); }
+
+
+
+  function renderWordOfDay() {
+    const wordEl = document.getElementById('wotdWord');
+    if (!wordEl) return;
+    const list = (Array.isArray(vocab) && vocab.length) ? vocab : (typeof DEFAULT_VOCAB !== 'undefined' ? DEFAULT_VOCAB : []);
+    if (!list.length) {
+      wordEl.textContent = '—';
+      document.getElementById('wotdTrans').textContent = 'Словарь пуст';
+      document.getElementById('wotdEx').textContent = '';
+      document.getElementById('wotdMeta').textContent = '';
+      return;
+    }
+    // Stable daily pick: day-of-year index
+    const now = new Date();
+    const start = new Date(now.getFullYear(), 0, 0);
+    const day = Math.floor((now - start) / 86400000);
+    const idx = day % list.length;
+    const w = list[idx];
+    wordEl.textContent = w.word || '—';
+    document.getElementById('wotdTrans').textContent = w.trans || '';
+    document.getElementById('wotdEx').textContent = w.ex ? ('«' + w.ex + '»') : '';
+    const meta = [];
+    if (w.pos) meta.push(w.pos);
+    if (w.theme) meta.push(w.theme);
+    meta.push('#' + (idx + 1) + ' / ' + list.length);
+    document.getElementById('wotdMeta').textContent = meta.join(' · ');
+  }
+
+  function renderAll() {
+    if (typeof renderExercises === "function") renderExercises();
+    renderVocab(); renderIrregular(); renderHomework(); renderGrammar(); renderWordOfDay(); updateQuickStats();
+  }
+
+  ['vWord', 'vTrans', 'vEx'].forEach(id => {
+    document.getElementById(id).addEventListener('keydown', e => { if (e.key === 'Enter') addVocab(); });
+  });
+
+  
+  let exercises = [];
+  let exFilter = 'all', exLevel = 'all', exSource = 'all', exSkill = 'all';
+
+  function loadExercises() {
+    try {
+      const raw = localStorage.getItem('sd_exercises');
+      if (raw) {
+        const saved = JSON.parse(raw);
+        if (Array.isArray(saved) && saved.length) {
+          // merge progress from saved into DEFAULT by id/topic
+          const progressMap = {};
+          saved.forEach(s => { progressMap[s.id] = s.done; if (s.topic) progressMap['t:'+s.topic.toLowerCase()] = s.done; });
+          exercises = DEFAULT_EXERCISES.map(e => ({
+            ...e,
+            done: progressMap[e.id] !== undefined ? progressMap[e.id] : (progressMap['t:'+e.topic.toLowerCase()] !== undefined ? progressMap['t:'+e.topic.toLowerCase()] : e.done)
+          }));
+          return;
+        }
+      }
+    } catch (e) {}
+    exercises = JSON.parse(JSON.stringify(DEFAULT_EXERCISES));
+    saveExercises();
+  }
+
+  function saveExercises() {
+    localStorage.setItem('sd_exercises', JSON.stringify(exercises.map(e => ({id: e.id, topic: e.topic, done: e.done}))));
+  }
+
+  function toggleExercise(id, checked) {
+    const item = exercises.find(e => e.id === id);
+    if (!item) return;
+    item.done = checked;
+    saveExercises();
+    renderExercises();
+  }
+
+  function matchesExFilters(e) {
+    if (exFilter === 'done' && !e.done) return false;
+    if (exFilter === 'open' && e.done) return false;
+    if (exLevel !== 'all' && e.level !== exLevel) return false;
+    if (exSkill !== 'all' && e.skill !== exSkill) return false;
+    if (exSource === 'British Council' && e.source !== 'British Council') return false;
+    if (exSource === 'British Council 2' && e.source !== 'British Council 2') return false;
+    if (exSource === 'Business' && e.kind !== 'business') return false;
+    if (exSource === 'Series' && e.kind !== 'series') return false;
+    return true;
+  }
+
+  function renderExercises() {
+    const list = document.getElementById('exList');
+    const empty = document.getElementById('exEmpty');
+    if (!list) return;
+    const filtered = exercises.filter(matchesExFilters);
+    const doneN = exercises.filter(e => e.done).length;
+    document.getElementById('exCount').textContent = doneN + '/' + exercises.length;
+    const stats = document.getElementById('exStats');
+    if (stats) stats.textContent = `Показано: ${filtered.length} · Всего пройдено: ${doneN} из ${exercises.length}`;
+
+    if (!filtered.length) {
+      list.innerHTML = '';
+      if (empty) empty.style.display = 'block';
+      return;
+    }
+    if (empty) empty.style.display = 'none';
+
+    // group by source
+    const order = ['British Council', 'British Council 2', 'Business magazine', 'Podcasts for professionals', 'English for emails', "You're Hired", 'Rob and Jenny', 'Short Films', 'Friends', 'The Big Bang Theory', 'Harry Potter', 'The Last of Us'];
+    const bySrc = {};
+    filtered.forEach(e => {
+      if (!bySrc[e.source]) bySrc[e.source] = [];
+      bySrc[e.source].push(e);
+    });
+    const sources = order.filter(s => bySrc[s]).concat(Object.keys(bySrc).filter(s => !order.includes(s)));
+
+    list.innerHTML = sources.map(src => {
+      const items = bySrc[src];
+      const d = items.filter(i => i.done).length;
+      return `<div class="ex-source-head">${esc(src)} · ${d}/${items.length}</div>` +
+        items.map(e => {
+          const meta = [e.level, e.skill].filter(Boolean).join(' · ');
+          const title = e.url
+            ? `<a class="ex-link" href="${escAttr(e.url)}" target="_blank" rel="noopener">${esc(e.topic)}</a>`
+            : esc(e.topic);
+          return `<label class="ex-item ${e.done ? 'done' : ''}">
+            <input type="checkbox" ${e.done ? 'checked' : ''} onchange="toggleExercise(${e.id}, this.checked)">
+            <div style="flex:1">
+              <div>${title}</div>
+              ${meta ? `<div class="ex-meta">${esc(meta)}</div>` : ''}
+            </div>
+          </label>`;
+        }).join('');
+    }).join('');
+  }
+
+  // filter listeners
+  document.querySelectorAll('[data-exf]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('[data-exf]').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      exFilter = btn.dataset.exf;
+      renderExercises();
+    });
+  });
+  document.querySelectorAll('[data-exlvl]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('[data-exlvl]').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      exLevel = btn.dataset.exlvl;
+      renderExercises();
+    });
+  });
+  document.querySelectorAll('[data-exsrc]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('[data-exsrc]').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      exSource = btn.dataset.exsrc;
+      renderExercises();
+    });
+  });
+  document.querySelectorAll('[data-exsk]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('[data-exsk]').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      exSkill = btn.dataset.exsk;
+      renderExercises();
+    });
+  });
+
+
+  document.querySelectorAll('[data-hwf]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('[data-hwf]').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      hwFilter = btn.dataset.hwf;
+      renderHomework();
+    });
+  });
+
+  loadExercises();
+  renderExercises();
+  load();
+  autoSyncOnLoad();
+  
+  // Prefer the live Todoist-backed Netlify Function; fall back to schedule.json if it is unavailable.
+  fetch('/api/schedule?t=' + Date.now(), { cache: 'no-store' })
+    .then(r => r.ok ? r.json() : Promise.reject(new Error('Schedule API unavailable')))
+    .catch(() => fetch('schedule.json?t=' + Date.now(), { cache: 'no-store' })
+      .then(r => r.ok ? r.json() : null))
+    .then(data => {
+      if (data && Array.isArray(data.lessons)) {
+        window._remoteSchedule = data;
+        if (typeof applyLocalPaymentSnapshot === 'function') {
+          try { applyLocalPaymentSnapshot(); } catch(e) {}
+        }
+      }
+    })
+    .catch(() => {});
+
+</script>
+</body>
+</html>
