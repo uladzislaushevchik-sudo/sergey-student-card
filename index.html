@@ -1,55 +1,74 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="ru">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Сергей Давидовский | Карточка</title>
-<style>body{font-family:system-ui;padding:2rem;text-align:center;background:#0f172a;color:#e2e8f0}</style>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#101827">
+<title>Сергей Давидовский — занятия английским</title>
+<style>
+:root{color-scheme:dark;--bg:#101827;--panel:#172235;--line:#29384f;--text:#f1f5f9;--muted:#9eacc0;--accent:#8bd5ca;--gold:#f4d58d}
+*{box-sizing:border-box}body{margin:0;min-height:100vh;padding:28px 16px;background:radial-gradient(ellipse at top,#24364b 0%,var(--bg) 58%);font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:var(--text)}
+main{max-width:760px;margin:0 auto}.eyebrow{font-size:.78rem;letter-spacing:.16em;text-transform:uppercase;color:var(--accent);font-weight:750}
+header{padding:26px 0 24px}h1{font-size:clamp(2rem,6vw,3.25rem);letter-spacing:-.045em;line-height:1.08;margin:12px 0}header p{color:var(--muted);margin:0;font-size:1.02rem}
+.card{background:linear-gradient(145deg,rgba(30,45,66,.96),rgba(20,31,48,.98));border:1px solid var(--line);border-radius:22px;padding:clamp(20px,5vw,32px);box-shadow:0 22px 70px #0003}
+.section-title{font-size:1.12rem;margin:0 0 18px}.status{display:flex;align-items:center;gap:9px;color:var(--muted);font-size:.84rem;margin-bottom:22px}.dot{width:8px;height:8px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 4px #8bd5ca1c}
+.lesson{display:grid;grid-template-columns:84px 1fr;gap:18px;align-items:center;padding:18px 0;border-top:1px solid var(--line)}.lesson:first-of-type{border-top:0}
+.datebox{background:#8bd5ca14;border:1px solid #8bd5ca38;border-radius:15px;padding:12px 8px;text-align:center}.day{font-size:1.8rem;line-height:1;font-weight:800;color:var(--accent)}.month{font-size:.76rem;color:var(--muted);margin-top:6px;text-transform:uppercase}
+.lesson h3{margin:0 0 5px;font-size:1.05rem}.time{font-size:1.35rem;font-weight:750;letter-spacing:-.02em}.note{color:var(--muted);font-size:.88rem;margin-top:5px}
+.empty{padding:20px 0;color:var(--muted);line-height:1.6}.footer{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;color:var(--muted);font-size:.78rem;margin-top:20px}
+@media(max-width:420px){body{padding:16px 12px}.lesson{grid-template-columns:68px 1fr;gap:13px}.day{font-size:1.55rem}.time{font-size:1.2rem}}
+</style>
 </head>
 <body>
-<p>Загрузка карточки…</p>
-<script src="p0.js"></script>
-<script src="p1.js"></script>
-<script src="p2.js"></script>
-<script src="p3.js"></script>
-<script src="p4.js"></script>
-<script src="p5.js"></script>
-<script src="p6.js"></script>
-<script src="p7.js"></script>
-<script src="p8.js"></script>
-<script src="p9.js"></script>
-<script src="p10.js"></script>
-<script src="p11.js"></script>
-<script src="p12.js"></script>
-<script src="p13.js"></script>
-<script src="p14.js"></script>
-<script src="p15.js"></script>
-<script src="p16.js"></script>
-<script src="p17.js"></script>
-<script src="p18.js"></script>
-<script src="p19.js"></script>
-<script src="p20.js"></script>
-<script src="p21.js"></script>
-<script src="p22.js"></script>
-<script src="p23.js"></script>
-<script src="p24.js"></script>
-<script src="p25.js"></script>
-<script src="p26.js"></script>
-<script src="p27.js"></script>
-<script src="p28.js"></script>
-<script src="p29.js"></script>
+<main>
+<header><div class="eyebrow">Английский язык · расписание</div><h1>Сергей Давидовский</h1><p>Ближайшие занятия и актуальное расписание</p></header>
+<section class="card" aria-live="polite">
+<div class="status"><span class="dot"></span><span id="status">Обновляем расписание…</span></div>
+<h2 class="section-title">Следующие занятия</h2>
+<div id="lessons"><p class="empty">Загружаем расписание…</p></div>
+<div class="footer"><span>Часовой пояс: Минск (Europe/Minsk)</span><span id="updated"></span></div>
+</section>
+</main>
+<script src="config.js"></script>
 <script>
-try {
-  const b64 = (window.__SD_PARTS||[]).join('');
-  const bin = atob(b64);
-  const bytes = new Uint8Array(bin.length);
-  for (let i=0;i<bin.length;i++) bytes[i]=bin.charCodeAt(i);
-  document.open();
-  document.write(new TextDecoder('utf-8').decode(bytes));
-  document.close();
-} catch(e) {
-  document.body.innerHTML = '<p style="color:#f87171">Ошибка: '+e.message+'</p>';
-}
+(function(){
+ const TZ='Europe/Minsk';
+ const status=document.getElementById('status'), list=document.getElementById('lessons'), updated=document.getElementById('updated');
+ const fmt=(date,opts)=>new Intl.DateTimeFormat('ru-RU',{timeZone:TZ,...opts}).format(date);
+ function localDate(dateStr,timeStr){return new Date(dateStr+'T'+(timeStr||'00:00')+':00+03:00')}
+ function render(data,live){
+  const nowParts=new Intl.DateTimeFormat('en-CA',{timeZone:TZ,year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date());
+  const part=k=>nowParts.find(x=>x.type===k).value;
+  const today=part('year')+'-'+part('month')+'-'+part('day');
+  const lessons=(data.lessons||[]).filter(x=>x.date && x.time && x.date>=today).sort((a,b)=>(a.date+a.time).localeCompare(b.date+b.time));
+  list.replaceChildren();
+  if(!lessons.length){const p=document.createElement('p');p.className='empty';p.textContent='Пока нет запланированных занятий. Новое занятие появится здесь автоматически после добавления в Todoist.';list.append(p)}
+  else lessons.forEach(item=>{
+   const d=localDate(item.date,item.time), row=document.createElement('article');row.className='lesson';
+   const date=document.createElement('div');date.className='datebox';
+   const day=document.createElement('div');day.className='day';day.textContent=fmt(d,{day:'2-digit'});
+   const month=document.createElement('div');month.className='month';month.textContent=fmt(d,{month:'short'}).replace('.','');
+   date.append(day,month);
+   const info=document.createElement('div'), h=document.createElement('h3'), t=document.createElement('div');h.textContent=fmt(d,{weekday:'long'});t.className='time';t.textContent=item.time;
+   info.append(h,t);if(item.note){const n=document.createElement('div');n.className='note';n.textContent=item.note;info.append(n)}
+   row.append(date,info);list.append(row);
+  });
+  status.textContent=live?'Расписание синхронизировано с Todoist':'Показаны сохранённые данные; автоматическая синхронизация ещё не подключена';
+  updated.textContent=data.updated?'Данные на '+data.updated:'';
+ }
+ async function load(){
+  try{
+   const endpoint=(window.SERGEY_SCHEDULE_API||'').trim();
+   if(endpoint){
+    const r=await fetch(endpoint,{cache:'no-store'});if(!r.ok)throw new Error('API '+r.status);
+    render(await r.json(),true);return;
+   }
+  }catch(e){status.textContent='Не удалось связаться с Todoist — показываем последние сохранённые данные'}
+  try{const r=await fetch('./schedule.json?ts='+Date.now(),{cache:'no-store'});if(!r.ok)throw new Error('schedule '+r.status);render(await r.json(),false)}
+  catch(e){status.textContent='Не удалось загрузить расписание';list.textContent='Попробуйте обновить страницу позже.'}
+ }
+ load();
+})();
 </script>
 </body>
 </html>
