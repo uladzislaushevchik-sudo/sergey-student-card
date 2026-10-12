@@ -363,6 +363,7 @@
     }
 
   
+    .stat-input[readonly] { cursor: default; caret-color: transparent; }
     .stat-input {
       width: 100%; border: none; background: transparent; text-align: center;
       font-size: inherit; font-weight: inherit; color: inherit; font-family: inherit;
@@ -463,8 +464,6 @@
     <div class="header-tools">
       <button class="tool-btn" id="themeBtn" onclick="toggleTheme()">🌓 <span data-i18n="theme">Тема</span></button>
       <button class="tool-btn" id="langBtn" onclick="toggleLang()">EN</button>
-      <button class="tool-btn" onclick="exportData()">💾 Экспорт</button>
-      <button class="tool-btn" onclick="window.print()">🖨️</button>
     </div>
   </header>
 
@@ -494,7 +493,7 @@
         </div>
         <div class="stats-grid">
           <div class="stat">
-            <div class="value"><input class="stat-input" id="pf_lessons" type="number" min="0" value="69" title="Клик — изменить"></div>
+            <div class="value"><input class="stat-input" id="pf_lessons" type="number" min="0" value="69" readonly aria-readonly="true" title="Количество занятий рассчитывается автоматически" tabindex="-1"></div>
             <div class="label">занятий</div>
           </div>
           <div class="stat">
@@ -1516,7 +1515,7 @@
   }
 
   function bindProfileInputs() {
-    ['pf_lessons','pf_freq','pf_price','pf_level']
+    ['pf_freq','pf_price','pf_level']
       .forEach(id => {
         const el = document.getElementById(id);
         if (!el) return;
