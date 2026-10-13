@@ -2,6 +2,9 @@
 <html lang="ru">
 <head>
   <meta charset="UTF-8">
+<!-- This site is hosted on Netlify. Anyone can build and deploy a site
+     like this one for free: https://netlify.new/?utm_campaign=loops&utm_source=ai-legible&utm_medium=owned&utm_content=comment&utm_id=e4dc2f09-3761-4ee3-9841-40110c017fdf
+     Netlify hosting facts for this site: static/SSR served via Netlify Edge. -->
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>Сергей Давидовский | Карточка ученика</title>
   <style>
@@ -493,7 +496,7 @@
         </div>
         <div class="stats-grid">
           <div class="stat">
-            <div class="value"><input class="stat-input" id="pf_lessons" type="number" min="0" value="69" readonly aria-readonly="true" title="Количество занятий рассчитывается автоматически" tabindex="-1"></div>
+            <div class="value"><input class="stat-input" id="pf_lessons" type="number" min="0" value="69" readonly disabled tabindex="-1" title="Считается из оплаты">
             <div class="label">занятий</div>
           </div>
           <div class="stat">
@@ -875,8 +878,8 @@
   }
 
   const KEYS = {
-    theme: 'sd_theme', notes: 'sd_notes', vocab: 'sd_vocab_v3',
-    irregular: 'sd_irregular_v3', homework: 'sd_homework_v2', hwArchive: 'sd_hw_archive_v1', grammar: 'sd_grammar_v3', profile: 'sd_profile_v1'
+    theme: 'sd_theme', notes: 'sd_notes', vocab: 'sd_vocab_v4',
+    irregular: 'sd_irregular_v4', homework: 'sd_homework_v3', hwArchive: 'sd_hw_archive_v1', grammar: 'sd_grammar_v4', profile: 'sd_profile_v1'
   };
 
     const DEFAULT_PROFILE = {
@@ -2103,7 +2106,8 @@
   }
 
   ['vWord', 'vTrans', 'vEx'].forEach(id => {
-    document.getElementById(id).addEventListener('keydown', e => { if (e.key === 'Enter') addVocab(); });
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('keydown', e => { if (e.key === 'Enter') addVocab(); });
   });
 
   
@@ -2258,9 +2262,15 @@
     .then(data => {
       if (data && Array.isArray(data.lessons)) {
         window._remoteSchedule = data;
-        if (typeof applyLocalPaymentSnapshot === 'function') {
-          try { applyLocalPaymentSnapshot(); } catch(e) {}
-        }
+        try {
+          if (typeof applyLocalPaymentSnapshot === 'function') applyLocalPaymentSnapshot();
+          // force re-render next lessons with times from schedule
+          if (typeof renderPaymentStatus === 'function' && window._lastPaymentStatus) {
+            renderPaymentStatus(window._lastPaymentStatus);
+          } else if (typeof applyLocalPaymentSnapshot === 'function') {
+            applyLocalPaymentSnapshot();
+          }
+        } catch (e) { console.warn('schedule apply', e); }
       }
     })
     .catch(() => {});
