@@ -160,7 +160,7 @@
       background: var(--bg); border-radius: 10px; padding: 10px 8px;
       text-align: center; border: 1px solid var(--border);
     }
-    .stat .value { font-size: 1.2rem; font-weight: 700; color: var(--primary); }
+    .stat .value { font-size: 1.2rem; font-weight: 700; color: var(--primary); user-select: none; pointer-events: none; }
     .stat .label { font-size: 0.7rem; color: var(--muted); margin-top: 2px; }
 
     .level-bar { display: flex; align-items: center; gap: 6px; margin: 12px 0; flex-wrap: wrap; }
@@ -496,19 +496,19 @@
         </div>
         <div class="stats-grid">
           <div class="stat">
-            <div class="value"><input class="stat-input" id="pf_lessons" type="number" min="0" value="69" readonly disabled tabindex="-1" title="Считается из оплаты">
+            <div class="value" id="pf_lessons">69</div>
             <div class="label">занятий</div>
           </div>
           <div class="stat">
-            <div class="value"><input class="stat-input" id="pf_freq" value="2×" title="Клик — изменить"></div>
+            <div class="value" id="pf_freq">2×</div>
             <div class="label">в неделю</div>
           </div>
           <div class="stat">
-            <div class="value"><input class="stat-input" id="pf_price" value="40 Br" title="Клик — изменить"></div>
+            <div class="value" id="pf_price">40 Br</div>
             <div class="label">за 60 мин</div>
           </div>
           <div class="stat">
-            <div class="value"><input class="stat-input" id="pf_level" value="B1-" title="Клик — изменить"></div>
+            <div class="value" id="pf_level">B1−</div>
             <div class="label">уровень</div>
           </div>
         </div>
@@ -524,9 +524,7 @@
       <div class="card">
         <h2 style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap">
           <span>📅 Занятия и оплата</span>
-          <button type="button" class="btn-sync" id="btnSync" onclick="syncFromGoogle()" title="Обновить данные">↻ Обновить</button>
         </h2>
-        <div id="syncStatus" style="font-size:0.75rem;color:var(--muted);margin-bottom:8px;display:none"></div>
         <div class="info-grid">
           <div class="info-row">
             <label>Следующие занятия</label>
@@ -563,9 +561,7 @@
           <div style="font-size:0.85rem;color:var(--muted);margin-top:8px;font-style:italic" id="wotdEx"></div>
           <div style="font-size:0.75rem;color:var(--muted);margin-top:8px" id="wotdMeta"></div>
         </div>
-        <div style="margin-top:12px;font-size:0.82rem;color:var(--muted)" id="quickStats">
-          Словарь: — · Irregular: — · Homework открыто: —
-        </div>
+        
       </div>
     </section>
 
@@ -964,14 +960,15 @@
     });
   }
 
-  function setSyncStatus(msg, ok) {
-    const el = document.getElementById('syncStatus');
+  
+  function setProfileField(id, text) {
+    const el = document.getElementById(id);
     if (!el) return;
-    if (!msg) { el.style.display = 'none'; el.textContent = ''; return; }
-    el.style.display = 'block';
-    el.textContent = msg;
-    el.style.color = ok === false ? '#b91c1c' : (ok === true ? '#166534' : 'var(--muted)');
+    if ('value' in el && el.tagName === 'INPUT') el.value = text;
+    else el.textContent = text;
   }
+
+  function setSyncStatus(msg, ok) { /* tech status hidden */ }
 
   /** Read Info sheet → profile fields (lessons, level, unpaid, next lesson…) */
   function applyInfoSheet(rows) {
@@ -1364,9 +1361,8 @@
     status.orphanLessons = status.orphanPay > 0 ? Math.round(status.orphanPay / 40) : 0;
     renderPaymentStatus(status);
     const lessonsCount = Math.max(status.total, snap.headerCount || 0, snap.count || 0);
-    const lessonsInput = document.getElementById('pf_lessons');
-    if (lessonsInput && lessonsCount) {
-      lessonsInput.value = lessonsCount;
+    if (lessonsCount) {
+      setProfileField('pf_lessons', String(lessonsCount));
       if (typeof saveProfile === 'function') saveProfile();
     }
     const levelEl = document.getElementById('pf_level');
@@ -1456,9 +1452,8 @@
     }
     const lessonsCount = Math.max(status.total, headerCount);
 
-    const lessonsInput = document.getElementById('pf_lessons');
-    if (lessonsInput && lessonsCount) {
-      lessonsInput.value = lessonsCount;
+    if (lessonsCount) {
+      setProfileField('pf_lessons', String(lessonsCount));
       if (typeof saveProfile === 'function') saveProfile();
     }
     return { ...status, total: lessonsCount, mode, lessonsFound: lessons.length };
@@ -1473,7 +1468,7 @@
     p = { ...DEFAULT_PROFILE, ...p };
     // if lessons still at old hardcoded default path, keep sheet value
     // кол-во занятий синхронизируется из оплаты (COUNTA дат = Info!E2)
-    const set = (id, val) => { const el = document.getElementById(id); if (el) el.value = val ?? ''; };
+    const set = (id, val) => { const el = document.getElementById(id); if (!el) return; const v = val ?? ''; if (el.tagName === 'INPUT') el.value = v; else el.textContent = v; };
     set('pf_lessons', p.lessons);
     set('pf_freq', p.freq);
     set('pf_price', p.price);
@@ -1486,7 +1481,7 @@
   }
 
   function saveProfile() {
-    const get = id => { const el = document.getElementById(id); return el ? el.value : ''; };
+    const get = id => { const el = document.getElementById(id); if (!el) return ''; return el.tagName === 'INPUT' ? el.value : (el.textContent || '').trim(); };
     const p = {
       lessons: parseInt(get('pf_lessons'), 10) || 0,
       freq: get('pf_freq') || '2×',
@@ -1518,7 +1513,7 @@
   }
 
   function bindProfileInputs() {
-    ['pf_freq','pf_price','pf_level']
+    []  /* profile fields read-only */
       .forEach(id => {
         const el = document.getElementById(id);
         if (!el) return;
@@ -1965,12 +1960,7 @@
     renderHomework(); updateQuickStats();
   }
 
-  function updateQuickStats() {
-    const openHw = homework.filter(h => h.status !== 'done').length;
-    document.getElementById('quickStats').textContent =
-      `Словарь: ${vocab.length} · Irregular: ${irregular.length} · Homework: ${openHw} · Архив: ${hwArchive.length}`;
-  }
-
+  function updateQuickStats() { /* hidden */ }
 
   function renderGrammar() {
     const list = document.getElementById('grammarList');
